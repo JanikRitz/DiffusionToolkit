@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Drawing.Drawing2D;
 using System.Windows.Controls;
 
 namespace Diffusion.Toolkit.Controls
@@ -82,12 +83,9 @@ namespace Diffusion.Toolkit.Controls
 
         public void ReloadThumbnailsView(double offset)
         {
-            var wrapPanel = GetChildOfType<WrapPanel>(this)!;
-
-            if (wrapPanel.Children.Count == 0)
-            {
-                return;
-            }
+            var wrapPanel = GetChildOfType<WrapPanel>(this);
+            if (wrapPanel is null) return;
+            if (wrapPanel.Children.Count == 0) return;
 
             var scrollViewer = GetChildOfType<ScrollViewer>(this)!;
 

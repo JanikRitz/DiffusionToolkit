@@ -8,7 +8,11 @@ using Dir = System.IO.Directory;
 using System.Globalization;
 using MetadataExtractor.Formats.WebP;
 using Diffusion.Common;
-using System.Linq;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats;
+using SixLabors.ImageSharp.Metadata.Profiles.Exif;
+using ISImage = SixLabors.ImageSharp.Image;
+using System.Text.Json.Nodes;
 
 namespace Diffusion.IO;
 
@@ -38,6 +42,7 @@ public class Metadata
         ComfyUI,
         RuinedFooocus,
         FooocusMRE,
+        StableSwarm,
         Unknown,
     }
 
@@ -250,6 +255,14 @@ public class Metadata
                 }
             case FileType.JPEG:
                 {
+                    var stableSwarmParameters = ReadStableSwarmParameters(stream, file);
+                    if (stableSwarmParameters is not null)
+                    {
+
+                        return stableSwarmParameters;
+                    }
+
+                    stream.Seek(0, SeekOrigin.Begin);
                     IEnumerable<Directory> directories = JpegMetadataReader.ReadMetadata(stream);
 
                     try
@@ -1182,6 +1195,103 @@ public class Metadata
         }
 
         return fileParameters;
+    }
+
+    private static FileParameters? ReadStableSwarmParameters(FileStream stream, string file)
+    {
+        try
+        {
+            ISImage img = ISImage.Load(new DecoderOptions(), stream);
+            string pngMetadata = img.Metadata?.GetPngMetadata()?.TextData
+                ?.FirstOrDefault(t => t.Keyword.ToLower() == "parameters").Value;
+
+            if (pngMetadata is not null) return null;
+            if (img.Metadata?.ExifProfile?.TryGetValue(ExifTag.Model, out var data) ?? false) return null;
+
+            if (img.Metadata?.ExifProfile?.TryGetValue(ExifTag.UserComment, out var data2) ?? false)
+            {
+                var json = data2.Value.Text;
+                if (json[0] > sbyte.MaxValue) return null;
+
+                var imageParameters = JsonSerializer.Deserialize<ImageGenerationParameters>(json);
+                if (imageParameters is null) return null;
+
+                var parsed = imageParameters.sui_image_params;
+                var knownAttributes = new HashSet<string> { "prompt", "negativeprompt", "seed", "steps", "sampler", "cfgscale", "width", "height", "model" };
+
+                var jsonNode = JsonNode.Parse(json);
+                string filtered = "";
+                if (jsonNode is JsonObject suiParams)
+                {
+                    var jsonObject = suiParams.First().Value.AsObject();
+                    foreach (var property in jsonObject.ToList())
+                    {
+                        if (knownAttributes.Contains(property.Key))
+                        {
+                            jsonObject.Remove(property.Key);
+                        }
+                    }
+
+                    // Get the modified JSON string
+                    filtered = jsonObject.ToString();
+                }
+
+                return new FileParameters()
+                {
+                    Prompt = parsed.prompt,
+                    NegativePrompt = parsed.negativeprompt,
+                    Seed = parsed.seed,
+                    Steps = parsed.steps,
+                    Sampler = parsed.sampler,
+                    CFGScale = parsed.cfgscale,
+                    Width = parsed.width,
+                    Height = parsed.height,
+                    Model = parsed.model,
+                    Path = file,
+                    Parameters = json,
+                    OtherParameters = filtered,
+                    FileSize = new FileInfo(file).Length,
+                };
+            }
+        }
+        catch (ArgumentNullException ex)
+        {
+        }
+        catch (JsonException ex)
+        {
+        }
+
+        return null;
+    }
+
+    public class ImageGenerationParameters
+    {
+        public SuiImageParams sui_image_params { get; set; }
+    }
+    public class SuiImageParams
+    {
+        public string prompt { get; set; }
+        public string negativeprompt { get; set; }
+        public long seed { get; set; }
+        public int steps { get; set; }
+        public string sampler { get; set; }
+        public decimal cfgscale { get; set; }
+        public int width { get; set; }
+        public int height { get; set; }
+        public string model { get; set; }
+
+        /* Unused parameters in Diffusion Toolkit, but still common in Stable Swarm
+        public string aspectratio { get; set; }
+        public string scheduler { get; set; }
+        public string freeuapplyto { get; set; }
+        public double? freeublockone { get; set; }
+        public double? freeublocktwo { get; set; }
+        public double? freeuskipone { get; set; }
+        public double? freeuskiptwo { get; set; }
+        public string swarm_version { get; set; }
+        public string date { get; set; }
+        public string generation_time { get; set; }
+        */
     }
 
 
